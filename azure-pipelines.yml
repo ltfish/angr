@@ -17,7 +17,7 @@ steps:
 
 - script: |
     echo Installing dependencies
-    ( curl https://raw.githubusercontent.com/angr/angr-dev/master/tests/travis-install.sh | grep -v 404 || curl https://raw.githubusercontent.com/angr/angr-dev/master/tests/travis-install.sh ) | bash
+    ( curl https://raw.githubusercontent.com/angr/angr-dev/${Build.SourceBranchName}/tests/travis-install.sh | grep -v 404 || curl https://raw.githubusercontent.com/angr/angr-dev/master/tests/travis-install.sh ) | bash
   displayName: 'Installing dependencies'
 
 - script: |
