@@ -11,6 +11,7 @@ pool:
 
 variables:
   PY: e
+  ANGR_REPO: angr
 
 steps:
 - task: UsePythonVersion@0
