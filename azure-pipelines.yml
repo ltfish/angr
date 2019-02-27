@@ -17,10 +17,10 @@ steps:
 
 - script: |
     echo Installing dependencies
-    ( curl https://raw.githubusercontent.com/angr/angr-dev/${Build.SourceBranchName}/tests/travis-install.sh | grep -v 404 || curl https://raw.githubusercontent.com/angr/angr-dev/master/tests/travis-install.sh ) | bash
+    ( curl https://raw.githubusercontent.com/angr/angr-dev/wip/azure/tests/azure-install.sh | grep -v 404 || curl https://raw.githubusercontent.com/angr/angr-dev/wip/azure/tests/azure-install.sh ) | bash
   displayName: 'Installing dependencies'
 
 - script: |
     echo Run tests
-    ~/angr-dev/tests/travis-test.sh
+    ~/angr-dev/tests/azure-test.sh
   displayName: 'Run tests'
