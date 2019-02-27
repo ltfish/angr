@@ -9,6 +9,9 @@ trigger:
 pool:
   vmImage: 'Ubuntu-16.04'
 
+variables:
+  PY: e
+
 steps:
 - task: UsePythonVersion@0
   inputs:
