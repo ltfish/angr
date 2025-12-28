@@ -11,7 +11,11 @@ import re
 import weakref
 import bisect
 import os
+import pickle
+import tempfile
+import uuid
 
+import lmdb
 import networkx
 
 from archinfo.arch_soot import SootMethodDescriptor
@@ -616,6 +620,111 @@ class FunctionManager(Generic[K], KnowledgeBasePlugin, collections.abc.Mapping[K
                             and cfgnode.function_address != func.addr
                         ):
                             self.callgraph.add_edge(func.addr, cfgnode.function_address)
+
+    def save_all(self, db_path: str | None = None) -> str:
+        """
+        Save all functions to an LMDB database.
+
+        :param db_path: Optional path for the LMDB database. If not provided, an automatically
+                        generated filename in the system temporary directory will be used.
+        :return: The path to the LMDB database file.
+        """
+        if db_path is None:
+            db_path = os.path.join(tempfile.gettempdir(), f"angr_functions_{uuid.uuid4().hex}.lmdb")
+
+        # Create LMDB environment with a reasonable map size (1GB default)
+        env = lmdb.open(db_path, map_size=1024 * 1024 * 1024, max_dbs=2)
+
+        try:
+            # Create separate databases for functions and metadata
+            functions_db = env.open_db(b"functions")
+            metadata_db = env.open_db(b"metadata")
+
+            with env.begin(write=True) as txn:
+                # Save each function
+                for func_addr, func in self._function_map.items():
+                    # Serialize function to protobuf
+                    cmsg = func.serialize_to_cmessage()
+                    key = str(func_addr).encode("utf-8")
+                    txn.put(key, cmsg.SerializeToString(), db=functions_db)
+
+                # Save metadata
+                metadata = {
+                    "callgraph": networkx.node_link_data(self.callgraph),
+                    "function_addrs_set": list(self.function_addrs_set),
+                    "block_map_keys": list(self.block_map.keys()),
+                }
+                txn.put(b"metadata", pickle.dumps(metadata), db=metadata_db)
+
+        finally:
+            env.close()
+
+        l.info("Saved %d functions to %s", len(self._function_map), db_path)
+        return db_path
+
+    def load_all(self, db_path: str) -> None:
+        """
+        Load all functions from an LMDB database.
+
+        :param db_path: Path to the LMDB database to load from.
+        """
+        if not os.path.exists(db_path):
+            raise FileNotFoundError(f"LMDB database not found: {db_path}")
+
+        # Clear existing data
+        self.clear()
+
+        env = lmdb.open(db_path, readonly=True, max_dbs=2)
+
+        try:
+            functions_db = env.open_db(b"functions")
+            metadata_db = env.open_db(b"metadata")
+
+            # First pass: collect all function addresses
+            all_func_addrs = set()
+            with env.begin(db=functions_db) as txn:
+                cursor = txn.cursor()
+                for key, _ in cursor:
+                    func_addr = int(key.decode("utf-8"))
+                    all_func_addrs.add(func_addr)
+
+            # Second pass: load all functions
+            with env.begin() as txn:
+                cursor = txn.cursor(db=functions_db)
+                for key, value in cursor:
+                    func_addr = int(key.decode("utf-8"))
+                    # Deserialize protobuf
+                    from angr.protos import function_pb2
+
+                    cmsg = function_pb2.Function()
+                    cmsg.ParseFromString(value)
+
+                    # Reconstruct function
+                    func = Function.parse_from_cmessage(
+                        cmsg,
+                        function_manager=self,
+                        project=self._kb._project,
+                        all_func_addrs=all_func_addrs,
+                    )
+
+                    # Add to function map (bypass the auto-creation mechanism)
+                    self._function_map[func_addr] = func
+                    self.function_addrs_set.add(func_addr)
+
+                # Load metadata
+                metadata_bytes = txn.get(b"metadata", db=metadata_db)
+                if metadata_bytes:
+                    metadata = pickle.loads(metadata_bytes)
+                    self.callgraph = networkx.node_link_graph(metadata["callgraph"], directed=True, multigraph=True)
+
+        finally:
+            env.close()
+
+        # Reconnect function manager references for all functions
+        for func in self._function_map.values():
+            func._function_manager = self
+
+        l.info("Loaded %d functions from %s", len(self._function_map), db_path)
 
 
 KnowledgeBasePlugin.register_default("functions", FunctionManager)
