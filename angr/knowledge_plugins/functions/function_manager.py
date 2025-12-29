@@ -779,9 +779,11 @@ class FunctionManager(Generic[K], KnowledgeBasePlugin, collections.abc.Mapping[K
         """
         self._max_cached_functions = value
         if value is not None:
-            # Evict excess functions
+            # Evict excess functions, but stop if eviction fails
             while len(self._function_map) > value:
-                self._evict_lru()
+                if not self._evict_lru():
+                    # Can't evict any more functions
+                    break
 
     @property
     def cached_function_count(self) -> int:
@@ -833,10 +835,14 @@ class FunctionManager(Generic[K], KnowledgeBasePlugin, collections.abc.Mapping[K
         ):
             self._evict_lru()
 
-    def _evict_lru(self) -> None:
-        """Evict the least recently used function to LMDB."""
+    def _evict_lru(self) -> bool:
+        """
+        Evict the least recently used function to LMDB.
+
+        :return: True if a function was successfully evicted, False otherwise.
+        """
         if not self._lru_order:
-            return
+            return False
 
         # Try to find a function that can be evicted (is serializable)
         evicted = False
@@ -884,6 +890,8 @@ class FunctionManager(Generic[K], KnowledgeBasePlugin, collections.abc.Mapping[K
 
         if not evicted:
             l.debug("Could not find any function to evict (all may be non-serializable)")
+
+        return evicted
 
     def _save_to_lmdb(self, func: Function) -> None:
         """Save a single function to LMDB."""
@@ -951,9 +959,11 @@ class FunctionManager(Generic[K], KnowledgeBasePlugin, collections.abc.Mapping[K
                 and self._max_cached_functions is not None
                 and len(self._function_map) > self._max_cached_functions
             ):
-                # Evict excess functions
+                # Evict excess functions, but stop if eviction fails
                 while len(self._function_map) > self._max_cached_functions:
-                    self._evict_lru()
+                    if not self._evict_lru():
+                        # Can't evict any more functions (all may be non-serializable)
+                        break
 
     def _load_all_spilled(self) -> None:
         """Load all spilled functions back into memory (disables eviction temporarily)."""
@@ -1106,7 +1116,9 @@ class FunctionManager(Generic[K], KnowledgeBasePlugin, collections.abc.Mapping[K
             # evict excess functions
             if self._max_cached_functions is not None:
                 while len(self._function_map) > self._max_cached_functions:
-                    self._evict_lru()
+                    if not self._evict_lru():
+                        # Can't evict any more functions
+                        break
 
         finally:
             env.close()
